@@ -16,7 +16,8 @@ from ministry_bot.exams.discord_cog import Exams
 from ministry_bot.exams.exam_monitor import RoomChange
 from ministry_bot.notifications.discord_cog import Notifications
 from ministry_bot.notifications.subscriptions import (
-    add_subscription_prompt, get_subscription_cog, register_subscription_message,
+    SUBSCRIPTION_PROMPT, add_subscription_prompt, get_subscription_cog,
+    register_subscription_message,
 )
 from ministry_bot.schedule.discord_cog import Schedule
 from ministry_bot.schedule.pdf_storage import PdfSnapshot
@@ -38,10 +39,12 @@ class DiscordFeatureTests(unittest.IsolatedAsyncioTestCase):
                         if isinstance(command, discord.app_commands.Command)
                     }
                     self.assertEqual(commands, {
-                        "ping", "schedule status", "schedule check", "exams status", "exams check",
+                        "ping", "schedule status", "schedule check", "schedule preview", "exams status", "exams check",
                         "gifs status", "notifications status", "notifications setup",
                     })
                     self.assertIs(get_subscription_cog(bot), bot.get_cog("Notifications"))
+                    self.assertFalse(bot.intents.guild_reactions)
+                    self.assertIn(bot.get_cog("Notifications").persistent_view, bot.persistent_views)
 
     async def test_schedule_delivery_sends_real_pdf_link_and_clears_queue(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -57,7 +60,7 @@ class DiscordFeatureTests(unittest.IsolatedAsyncioTestCase):
                 await cog.send_pending_notifications()
                 channel.send.assert_awaited_once()
                 embed = channel.send.await_args.kwargs["embed"]
-                self.assertEqual(embed.title, "Class timetable updated")
+                self.assertEqual(embed.title, "📚 Ενημερώθηκε το πρόγραμμα μαθημάτων")
                 self.assertEqual(embed.url, snapshot.url)
                 self.assertIn(snapshot.url, embed.fields[0].value)
                 self.assertEqual(cog.state_store.get_pending_notifications(), [])
@@ -89,7 +92,7 @@ class DiscordFeatureTests(unittest.IsolatedAsyncioTestCase):
                 await cog.send_pending_notifications()
                 channel.send.assert_awaited_once()
                 embed = channel.send.await_args.kwargs["embed"]
-                self.assertEqual(embed.title, "Exam rooms changed")
+                self.assertEqual(embed.title, "📍 Αλλαγές αιθουσών εξετάσεων")
                 self.assertEqual(embed.url, after.period.program_url)
                 self.assertIn("Room 101", embed.fields[0].value)
                 self.assertIn("Room 202", embed.fields[0].value)
@@ -117,7 +120,14 @@ class DiscordFeatureTests(unittest.IsolatedAsyncioTestCase):
                     read_message_history=True, add_reactions=True, manage_messages=True,
                 )
                 user = SimpleNamespace(id=999)
-                initial = SimpleNamespace(id=500, channel=channel, guild=guild, author=user, add_reaction=AsyncMock())
+                initial = SimpleNamespace(id=500, channel=channel, guild=guild, author=user, embeds=[], components=[])
+                async def update_embed(**kwargs):
+                    if "embed" in kwargs:
+                        initial.embeds = [kwargs["embed"]]
+                    if "view" in kwargs:
+                        initial.components = [discord.ActionRow(row) for row in kwargs["view"].to_components()]
+                    return initial
+                initial.edit = AsyncMock(side_effect=update_embed)
                 channel.send.return_value = initial
                 channel.fetch_message = AsyncMock(return_value=initial)
                 bot = SimpleNamespace(settings=settings, user=user, get_guild=lambda _: guild, get_channel=lambda _: channel)
@@ -125,13 +135,18 @@ class DiscordFeatureTests(unittest.IsolatedAsyncioTestCase):
                 bot.get_cog = lambda _: cog
                 self.assertIs(await cog.ensure_initial_subscription_message(), initial)
                 self.assertIs(await cog.ensure_initial_subscription_message(), initial)
+                self.assertIs(await cog.ensure_initial_subscription_message(), initial)
+                initial.edit.assert_awaited_once()
+                self.assertTrue(initial.embeds[0].title)
                 channel.send.assert_awaited_once()
                 self.assertTrue(cog.subscription_store.initial(guild.id).ready)
-                alert = SimpleNamespace(id=501, channel=channel, guild=guild, author=user, add_reaction=AsyncMock())
+                alert = SimpleNamespace(id=501, channel=channel, guild=guild, author=user, edit=AsyncMock())
                 embed = discord.Embed()
                 add_subscription_prompt(bot, embed, channel.id, role.id)
-                self.assertEqual(embed.fields[0].name, "Timetable notifications")
+                self.assertTrue(embed.fields[0].name)
+                self.assertEqual(embed.fields[0].value, SUBSCRIPTION_PROMPT)
                 await register_subscription_message(bot, alert, role.id)
+                self.assertTrue(alert.edit.await_args.kwargs["view"].is_persistent())
                 self.assertTrue(cog.subscription_store.get(alert.id).ready)
                 self.assertEqual(cog.subscription_store.pending(guild.id), [])
                 self.assertIsNone(cog.last_error)

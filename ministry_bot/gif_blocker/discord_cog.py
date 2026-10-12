@@ -10,13 +10,14 @@ from discord.ext import commands
 
 from ..core.config import read_env_id_list
 from .gif_detector import get_gif_block_reason
+from ..shared.discord_ui import GIF_REASON_LABELS, permission_status, styled_embed
 
 logger = logging.getLogger(__name__)
 RECENT_REMOVAL_LIMIT = 1000
 
 
 class GifModeration(commands.Cog):
-    gifs = app_commands.Group(name="gifs", description="GIF filtering commands.")
+    gifs = app_commands.Group(name="gifs", description="Φίλτρο GIF και κατάσταση δικαιωμάτων.")
 
     def __init__(self, bot):
         self.bot = bot
@@ -40,7 +41,7 @@ class GifModeration(commands.Cog):
         )
 
     async def _is_channel_exempt(self, channel) -> bool | None:
-        # The same list accepts_subscription channel, thread and category IDs.
+        # The same list accepts channel, thread and category IDs.
         ids = self.exempt_channel_ids
         if not ids:
             return False
@@ -89,10 +90,11 @@ class GifModeration(commands.Cog):
     @staticmethod
     def _format_log_preview(text: str, limit: int = 900) -> str:
         if not text:
-            return "No text content."
+            return "Χωρίς περιεχόμενο κειμένου."
         text = discord.utils.escape_mentions(text).replace("`", "'")
         if len(text) > limit:
-            text = text[:limit - 14] + "\n[truncated]"
+            suffix = "\n[περικοπή]"
+            text = text[:limit - len(suffix)] + suffix
         return f"```\n{text}\n```"
 
     async def _send_deletion_log(self, message: discord.Message, reason: str):
@@ -110,33 +112,33 @@ class GifModeration(commands.Cog):
                 raise ValueError(
                     "GIF_LOG_CHANNEL_ID must be a text channel or thread in DISCORD_GUILD_ID."
                 )
-            embed = discord.Embed(
-                title="GIF message removed",
+            embed = styled_embed(
+                title="🧹 Αφαιρέθηκε μήνυμα με GIF",
                 colour=discord.Colour.orange(),
                 timestamp=datetime.now(UTC),
             )
             name = getattr(message.author, "display_name", str(message.author))[:100]
             embed.add_field(
-                name="User", value=self._format_log_preview(f"{name}\nUser ID: {message.author.id}", 200),
+                name="👤 Χρήστης", value=self._format_log_preview(f"{name}\nID χρήστη: {message.author.id}", 200),
             )
             embed.add_field(
-                name="Channel", value=f"<#{message.channel.id}>\nChannel ID: {message.channel.id}",
+                name="📍 Κανάλι", value=f"<#{message.channel.id}>\nID καναλιού: {message.channel.id}",
             )
-            embed.add_field(name="Message ID", value=str(message.id))
-            embed.add_field(name="Reason", value=reason, inline=False)
+            embed.add_field(name="🔎 ID μηνύματος", value=str(message.id))
+            embed.add_field(name="🚫 Αιτία", value=GIF_REASON_LABELS.get(reason, "Εντοπίστηκε GIF"), inline=False)
             embed.add_field(
-                name="Message content", value=self._format_log_preview(message.content), inline=False,
+                name="💬 Περιεχόμενο μηνύματος", value=self._format_log_preview(message.content), inline=False,
             )
             snapshots = getattr(message, "message_snapshots", [])
             files = [file.filename for item in [message, *snapshots] for file in item.attachments]
             if files:
                 embed.add_field(
-                    name="Attachments", value=self._format_log_preview("\n".join(files)), inline=False,
+                    name="📎 Συνημμένα", value=self._format_log_preview("\n".join(files)), inline=False,
                 )
             forwarded_text = "\n\n".join(snapshot.content for snapshot in snapshots if snapshot.content)
             if forwarded_text:
                 embed.add_field(
-                    name="Forwarded content", value=self._format_log_preview(forwarded_text), inline=False,
+                    name="↪️ Προωθημένο περιεχόμενο", value=self._format_log_preview(forwarded_text), inline=False,
                 )
             await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
         except (discord.HTTPException, ValueError):
@@ -226,64 +228,65 @@ class GifModeration(commands.Cog):
             return
         await self.block_gif_message(message)
 
-    @gifs.command(name="status", description="Show GIF filtering status and channel permissions.")
+    @gifs.command(name="status", description="Δες την κατάσταση του φίλτρου GIF και τα δικαιώματα καναλιών.")
     @app_commands.guild_only()
     @app_commands.default_permissions(manage_guild=True)
     @app_commands.checks.has_permissions(manage_guild=True)
     async def status(self, interaction: discord.Interaction):
         enabled = self._is_enabled_in_guild(interaction.guild_id)
         parts = [
-            "GIF filtering: " + ("ON" if enabled else "OFF (GIF_BLOCK_ENABLED=false)."),
-            "Scope: accessible channels in the configured server, except exempt channels/categories and their threads.",
-            "Filtering runs whenever the bot is online, independently of timetable check hours.",
-            f"Messages removed since startup: {self.removed_count}.",
-            f"Exemption IDs configured: {len(self.settings.gif_exempt_ids)}.",
-            f"Exempt channel/category IDs configured: {len(self.exempt_channel_ids)}.",
+            "**Κατάσταση:** " + ("🟢 Ενεργό" if enabled else "⚪ Ανενεργό (`GIF_BLOCK_ENABLED=false`)"),
+            "Το φίλτρο καλύπτει τα προσβάσιμα κανάλια του διακομιστή, εκτός από τις εξαιρέσεις και τα νήματά τους.",
+            "Λειτουργεί όσο το bot είναι ενεργό, ανεξάρτητα από το ωράριο ελέγχου προγραμμάτων.",
+            f"**Διαγραφές από την εκκίνηση:** {self.removed_count}",
+            f"**Εξαιρέσεις χρηστών/ρόλων:** {len(self.settings.gif_exempt_ids)}",
+            f"**Εξαιρέσεις καναλιών/κατηγοριών:** {len(self.exempt_channel_ids)}",
         ]
         if interaction.channel is not None:
             exemption = await self._is_channel_exempt(interaction.channel)
             descriptions = {
-                True: "EXEMPT (GIF_EXEMPT_CHANNEL_IDS).",
-                False: "not exempt by channel or category ID.",
-                None: "UNKNOWN (parent channel lookup failed; GIF filtering skipped).",
+                True: "εξαιρείται (`GIF_EXEMPT_CHANNEL_IDS`)",
+                False: "δεν εξαιρείται από τις ρυθμίσεις καναλιών/κατηγοριών",
+                None: "άγνωστη κατάσταση — ο έλεγχος του γονικού καναλιού απέτυχε και το φίλτρο παρακάμπτεται",
             }
             parts.append(
-                "This channel: " + descriptions[exemption]
+                "**Τρέχον κανάλι:** " + descriptions[exemption]
             )
         if self.settings.gif_log_channel_id:
-            parts.append(f"GIF deletion log channel ID: {self.settings.gif_log_channel_id}.")
-            parts.append(f"Log delivery failures since startup: {self.log_failures}.")
+            parts.append(f"**Κανάλι καταγραφής διαγραφών:** <#{self.settings.gif_log_channel_id}>")
+            parts.append(f"**Αποτυχίες αποστολής καταγραφών:** {self.log_failures}")
             log_channel = self.bot.get_channel(self.settings.gif_log_channel_id)
             if log_channel is not None:
                 if (
                     not isinstance(log_channel, (discord.TextChannel, discord.Thread))
                     or log_channel.guild.id != self.settings.guild_id
                 ):
-                    parts.append("Log channel: INVALID (use a text channel in the configured server).")
+                    parts.append("⚠️ Το κανάλι καταγραφής δεν είναι έγκυρο. Επίλεξε κανάλι κειμένου στον επιλεγμένο διακομιστή.")
                 elif interaction.guild.me is not None:
                     permissions = log_channel.permissions_for(interaction.guild.me)
-                    parts.append("Bot permissions in the log channel:")
+                    parts.append("\n**Δικαιώματα στο κανάλι καταγραφής:**")
                     for name, granted in (
-                        ("View Channel", permissions.view_channel),
-                        ("Send Messages", permissions.send_messages_in_threads if isinstance(log_channel, discord.Thread) else permissions.send_messages),
-                        ("Embed Links", permissions.embed_links),
+                        ("view_channel", permissions.view_channel),
+                        ("send_messages", permissions.send_messages_in_threads if isinstance(log_channel, discord.Thread) else permissions.send_messages),
+                        ("embed_links", permissions.embed_links),
                     ):
-                        parts.append(f"{name}: {'OK' if granted else 'MISSING'}")
+                        parts.append(permission_status(name, granted))
             else:
-                parts.append("Log channel is not cached. Verify its ID and the bot's channel access.")
+                parts.append("⚠️ Το κανάλι καταγραφής δεν έχει φορτωθεί. Έλεγξε το ID και την πρόσβαση του bot.")
         else:
-            parts.append("GIF deletion logs: OFF (GIF_LOG_CHANNEL_ID is blank).")
+            parts.append("**Καταγραφή διαγραφών:** ⚪ Ανενεργή (`GIF_LOG_CHANNEL_ID` κενό)")
         member = interaction.guild.me
         if member is not None and interaction.channel is not None:
             permissions = interaction.channel.permissions_for(member)
-            parts.append("Bot permissions in this channel:")
+            parts.append("\n**Δικαιώματα στο τρέχον κανάλι:**")
             for name, granted in (
-                ("View Channel", permissions.view_channel),
-                ("Manage Messages", permissions.manage_messages),
-                ("Read Message History", permissions.read_message_history),
+                ("view_channel", permissions.view_channel),
+                ("manage_messages", permissions.manage_messages),
+                ("read_message_history", permissions.read_message_history),
             ):
-                parts.append(f"{name}: {'OK' if granted else 'MISSING'}")
-        await interaction.response.send_message("\n".join(parts), ephemeral=True)
+                parts.append(permission_status(name, granted))
+        embed = styled_embed("🧹 Κατάσταση φίλτρου GIF", "\n".join(parts), colour=discord.Colour.orange())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 async def setup(bot):

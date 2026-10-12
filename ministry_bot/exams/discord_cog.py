@@ -10,13 +10,16 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from .exam_monitor import ExamCalendarClient, ExamStateStore, ExamMonitor
-from ..notifications.subscriptions import add_subscription_prompt, register_subscription_message
+from ..notifications.subscriptions import (
+    add_subscription_prompt, get_subscription_view, register_subscription_message,
+)
+from ..shared.discord_ui import FOOTER_TEXT, styled_embed
 
 logger = logging.getLogger(__name__)
 
 
 class Exams(commands.Cog):
-    exams = app_commands.Group(name="exams", description="Exam timetable commands.")
+    exams = app_commands.Group(name="exams", description="Πρόγραμμα εξεταστικής και αλλαγές αιθουσών.")
 
     def __init__(self, bot):
         self.bot = bot
@@ -44,33 +47,33 @@ class Exams(commands.Cog):
     def build_exam_notification_embed(self, notification):
         snapshot = notification.snapshot
         published = notification.kind == "new_period"
-        title = "New exam timetable published" if published else "Exam rooms changed"
-        embed = discord.Embed(
+        title = "🎓 Δημοσιεύτηκε νέο πρόγραμμα εξεταστικής" if published else "📍 Αλλαγές αιθουσών εξετάσεων"
+        embed = styled_embed(
             title=title,
             description=(
-                f"Exam period: **{discord.utils.escape_markdown(snapshot.period.label)}**\n"
-                + (f"A timetable with {len(snapshot.events)} examinations is available."
-                   if published else f"Room assignments changed for {len(notification.changes)} examinations.")
+                f"**Εξεταστική περίοδος:** {discord.utils.escape_markdown(snapshot.period.label)}\n\n"
+                + (f"Το πρόγραμμα περιλαμβάνει **{len(snapshot.events)} εξετάσεις**."
+                   if published else f"Εντοπίστηκαν αλλαγές αιθουσών σε **{len(notification.changes)} εξετάσεις**.")
             ),
             url=snapshot.period.program_url,
-            colour=discord.Colour.blue() if published else discord.Colour.orange(),
+            colour=discord.Colour.purple() if published else discord.Colour.orange(),
             timestamp=datetime.fromisoformat(snapshot.checked_at),
         )
         for change in notification.changes[:8]:
             event = change.after
             start = datetime.fromisoformat(event.starts_at).astimezone(ZoneInfo("Europe/Athens"))
             end = datetime.fromisoformat(event.ends_at).astimezone(ZoneInfo("Europe/Athens"))
-            old_rooms = ", ".join(change.before.rooms) or "Not assigned"
-            new_rooms = ", ".join(event.rooms) or "Not assigned"
+            old_rooms = ", ".join(change.before.rooms) or "Δεν έχει οριστεί"
+            new_rooms = ", ".join(event.rooms) or "Δεν έχει οριστεί"
             value = (
-                f"{start:%d/%m/%Y %H:%M} - {end:%H:%M} (Europe/Athens)\n"
-                f"Previous rooms: {discord.utils.escape_markdown(old_rooms)}\n"
-                f"New rooms: {discord.utils.escape_markdown(new_rooms)}"
+                f"🗓️ **{start:%d/%m/%Y}** · {start:%H:%M}–{end:%H:%M} (ώρα Ελλάδας)\n"
+                f"**Πριν:** {discord.utils.escape_markdown(old_rooms)}\n"
+                f"**Τώρα:** {discord.utils.escape_markdown(new_rooms)}"
             )
             embed.add_field(name=event.title[:180], value=value[:500], inline=False)
         if len(notification.changes) > 8:
-            embed.set_footer(text=f"Showing 8 of {len(notification.changes)} room changes. Open the full timetable for all assignments.")
-        embed.add_field(name="Program", value=f"[Open exam timetable]({snapshot.period.program_url})", inline=False)
+            embed.set_footer(text=f"Εμφανίζονται 8 από {len(notification.changes)} αλλαγές. Δες το πλήρες πρόγραμμα. • {FOOTER_TEXT}")
+        embed.add_field(name="📄 Πλήρες πρόγραμμα", value=f"[Άνοιγμα προγράμματος εξεταστικής]({snapshot.period.program_url})", inline=False)
         return embed
 
     async def send_pending_notifications(self):
@@ -92,19 +95,23 @@ class Exams(commands.Cog):
                     if self.exam_settings.user_id:
                         mentions.append(f"<@{self.exam_settings.user_id}>")
                         users.append(discord.Object(id=self.exam_settings.user_id))
-                    message = ("A new exam timetable is available." if notification.kind == "new_period"
-                               else "Exam room assignments have changed.")
+                    message = ("📢 Είναι διαθέσιμο νέο πρόγραμμα εξεταστικής!" if notification.kind == "new_period"
+                               else "📢 Άλλαξαν οι αίθουσες σε εξετάσεις. Δες τις λεπτομέρειες παρακάτω.")
                     embed = self.build_exam_notification_embed(notification)
                     add_subscription_prompt(self.bot, embed, channel.id, self.exam_settings.role_id)
+                    view = get_subscription_view(self.bot, channel.id, self.exam_settings.role_id)
                     posted = await channel.send(
                         " ".join(mentions + [message]),
                         embed=embed,
+                        view=view,
                         allowed_mentions=discord.AllowedMentions(
                             everyone=False, roles=roles, users=users, replied_user=False,
                         ),
                     )
                     outbox.mark_notification_sent(notification.id)
-                    await register_subscription_message(self.bot, posted, self.exam_settings.role_id)
+                    await register_subscription_message(
+                        self.bot, posted, self.exam_settings.role_id, buttons_attached=view is not None,
+                    )
                 except Exception:
                     logger.exception("Exam notification %s remains pending.", notification.id)
                     break
@@ -135,7 +142,7 @@ class Exams(commands.Cog):
     async def before_poll(self):
         await self.bot.wait_until_ready()
 
-    @exams.command(name="status", description="Show the current exam period and monitoring status.")
+    @exams.command(name="status", description="Δες την τρέχουσα εξεταστική και την κατάσταση παρακολούθησης.")
     @app_commands.guild_only()
     async def status(self, interaction: discord.Interaction):
         snapshot = self.state_store.get_current_snapshot()
@@ -143,27 +150,28 @@ class Exams(commands.Cog):
         if snapshot:
             checked = datetime.fromisoformat(snapshot.checked_at).astimezone(self.policy.timezone)
             parts.extend([
-                f"**Exam period: {discord.utils.escape_markdown(snapshot.period.label)}**",
-                f"Period ID: {snapshot.period.id}. Examinations: {len(snapshot.events)}.",
-                f"<{snapshot.period.program_url}>",
-                f"Last successful check: {checked:%d/%m/%Y %H:%M:%S %Z}",
+                f"**Εξεταστική περίοδος:** {discord.utils.escape_markdown(snapshot.period.label)}",
+                f"**Κωδικός περιόδου:** `{snapshot.period.id}` · **Εξετάσεις:** {len(snapshot.events)}",
+                f"📄 [Άνοιγμα προγράμματος εξεταστικής]({snapshot.period.program_url})",
+                f"**Τελευταίος επιτυχής έλεγχος:** {checked:%d/%m/%Y %H:%M:%S %Z}",
             ])
             if not snapshot.events:
-                parts.append("Waiting for the current period's timetable to be published.")
+                parts.append("⏳ Αναμένεται η δημοσίευση των εξετάσεων της τρέχουσας περιόδου.")
         else:
-            parts.append("The first exam check has not completed yet.")
-        parts.append("Alerts: publication of a new exam period and room changes.")
+            parts.append("⏳ Ο πρώτος έλεγχος εξεταστικής δεν έχει ολοκληρωθεί ακόμη.")
+        parts.append("**Ειδοποιήσεις για:** νέα εξεταστική περίοδο και αλλαγές αιθουσών.")
         if not self.exam_settings.enabled:
-            parts.append("Automatic exam checks: OFF (EXAMS_ENABLED=false).")
+            parts.append("**Αυτόματοι έλεγχοι:** ⚪ Ανενεργοί (`EXAMS_ENABLED=false`)")
         elif not self.poll.is_running():
-            parts.append("Automatic exam monitoring has stopped. Check the logs.")
+            parts.append("⚠️ Η αυτόματη παρακολούθηση εξεταστικής έχει σταματήσει. Έλεγξε τις καταγραφές του bot.")
         elif self.poll.next_iteration:
             next_time = self.poll.next_iteration.astimezone(self.policy.timezone)
-            parts.append(f"Next automatic check: {next_time:%d/%m/%Y %H:%M:%S %Z}")
-        parts.append(f"Pending notifications: {len(self.state_store.get_pending_notifications())}")
-        await interaction.response.send_message("\n".join(parts), ephemeral=True)
+            parts.append(f"**Επόμενος αυτόματος έλεγχος:** {next_time:%d/%m/%Y %H:%M:%S %Z}")
+        parts.append(f"**Ειδοποιήσεις σε αναμονή:** {len(self.state_store.get_pending_notifications())}")
+        embed = styled_embed("🎓 Παρακολούθηση εξεταστικής", "\n\n".join(parts), colour=discord.Colour.purple())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @exams.command(name="check", description="Check exam publication and rooms immediately.")
+    @exams.command(name="check", description="Έλεγξε τώρα για νέα εξεταστική περίοδο και αλλαγές αιθουσών.")
     @app_commands.guild_only()
     @app_commands.default_permissions(manage_guild=True)
     @app_commands.checks.has_permissions(manage_guild=True)
@@ -173,18 +181,18 @@ class Exams(commands.Cog):
             result = await self.exam_monitor.check_for_exam_changes()
         except Exception:
             logger.exception("Manual exam check failed.")
-            await interaction.followup.send("The exam check failed. Stored state has been retained.", ephemeral=True)
+            await interaction.followup.send("❌ Ο έλεγχος εξεταστικής δεν ολοκληρώθηκε. Η προηγούμενη αποθηκευμένη κατάσταση διατηρήθηκε.", ephemeral=True)
             return
         await self.send_pending_notifications()
         messages = {
-            "baseline": "The current exam timetable was saved as the baseline without a notification.",
-            "waiting": "The exam period is visible, but its timetable has no examinations yet. Waiting for publication.",
-            "new_period": "A newly published exam timetable was detected.",
-            "rooms": f"Room changes were detected for {len(result.changes)} examinations.",
-            "unchanged": "No new exam period or room changes were detected.",
+            "baseline": "📌 Αποθηκεύτηκε η αρχική έκδοση της εξεταστικής, χωρίς αποστολή ειδοποίησης.",
+            "waiting": "⏳ Η εξεταστική περίοδος εμφανίζεται, αλλά οι εξετάσεις δεν έχουν δημοσιευτεί ακόμη.",
+            "new_period": "🎓 Εντοπίστηκε νέο πρόγραμμα εξεταστικής.",
+            "rooms": f"📍 Εντοπίστηκαν αλλαγές αιθουσών σε **{len(result.changes)} εξετάσεις**.",
+            "unchanged": "✅ Δεν εντοπίστηκε νέα εξεταστική περίοδος ή αλλαγή αιθουσών.",
         }
         pending = len(self.state_store.get_pending_notifications())
-        suffix = f" Pending notifications: {pending}." if pending else ""
+        suffix = f"\n⏳ Ειδοποιήσεις σε αναμονή: **{pending}**." if pending else ""
         await interaction.followup.send(messages[result.kind] + suffix, ephemeral=True)
 
 

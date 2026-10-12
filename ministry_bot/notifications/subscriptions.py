@@ -11,11 +11,12 @@ import discord
 logger = logging.getLogger(__name__)
 SUBSCRIBE_EMOJI = "🔔"
 UNSUBSCRIBE_EMOJI = "🔕"
-REACTION_CHOICES = (SUBSCRIBE_EMOJI, UNSUBSCRIBE_EMOJI)
+SUBSCRIBE_LABEL = "Ενεργοποίηση ειδοποιήσεων"
+UNSUBSCRIBE_LABEL = "Απενεργοποίηση ειδοποιήσεων"
 SUBSCRIPTION_PROMPT = (
-    "React with 🔔 to receive class and exam timetable alerts.\n"
-    "React with 🔕 to stop receiving these alerts.\n"
-    "Reactions reset after processing; you can change your choice at any time."
+    f"🔔 **{SUBSCRIBE_LABEL}:** παίρνεις τον ρόλο που γίνεται tag για αλλαγές του προγράμματος μαθημάτων και εξεταστικής.\n"
+    f"🔕 **{UNSUBSCRIBE_LABEL}:** αφαιρείται ο ρόλος και σταματούν οι ειδοποιήσεις.\n\n"
+    "*Πάτησε το αντίστοιχο κουμπί παρακάτω. Εμφανίζεται μια επιβεβαίωση μόνο σε εσένα.*"
 )
 
 
@@ -116,21 +117,31 @@ def get_subscription_cog(bot):
 def add_subscription_prompt(bot, embed: discord.Embed, channel_id: int, role_id: int | None):
     cog = get_subscription_cog(bot)
     if cog is not None and cog.accepts_subscription(channel_id, role_id):
-        embed.add_field(name="Timetable notifications", value=SUBSCRIPTION_PROMPT, inline=False)
+        embed.add_field(name="Ειδοποιήσεις", value=SUBSCRIPTION_PROMPT, inline=False)
 
 
-async def register_subscription_message(bot, message, role_id: int | None):
+def get_subscription_view(bot, channel_id: int, role_id: int | None):
+    """Create buttons only for alerts using the configured notification role."""
+    cog = get_subscription_cog(bot)
+    if cog is not None and cog.accepts_subscription(channel_id, role_id):
+        return cog.create_subscription_view()
+    return None
+
+
+async def register_subscription_message(
+    bot, message, role_id: int | None, *, buttons_attached: bool = False,
+):
     cog = None
     try:
         cog = get_subscription_cog(bot)
         if cog is None or not cog.accepts_subscription(message.channel.id, role_id):
             return
-        await cog.register_alert_message(message)
+        await cog.register_alert_message(message, buttons_attached=buttons_attached)
     except Exception as exc:
         if cog is not None:
             cog.last_error = str(exc)
         logger.exception(
-            "Subscription reactions could not be attached to message %s. "
+            "Subscription buttons could not be registered for message %s. "
             "The timetable notification was already delivered and will not be repeated.",
             message.id,
         )

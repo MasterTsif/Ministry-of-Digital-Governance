@@ -21,7 +21,6 @@ class MinistryBot(commands.Bot):
         intents.guilds = True
         intents.guild_messages = settings.gif_block_enabled
         intents.message_content = settings.gif_block_enabled
-        intents.guild_reactions = settings.notifications_enabled
         super().__init__(
             command_prefix=commands.when_mentioned,
             intents=intents,
@@ -68,10 +67,10 @@ class MinistryBot(commands.Bot):
         self, interaction: discord.Interaction, error: app_commands.AppCommandError
     ):
         if isinstance(error, app_commands.CheckFailure):
-            message = "The Manage Server permission is required for this command."
+            message = "⛔ Χρειάζεσαι το δικαίωμα **Διαχείριση διακομιστή** για αυτή την εντολή."
         else:
             logger.error("Application command failed.", exc_info=error)
-            message = "The command failed. Check the logs."
+            message = "❌ Η εντολή δεν ολοκληρώθηκε. Ο διαχειριστής μπορεί να ελέγξει τις καταγραφές του bot."
         if interaction.response.is_done():
             await interaction.followup.send(message, ephemeral=True)
         else:
