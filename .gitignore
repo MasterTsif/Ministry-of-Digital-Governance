@@ -5,14 +5,16 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .coverage
-htmlcov/
+htmlcov
 
 # Local credentials, configuration and runtime data
 /.env
 /.env.*
 !/.env.example
-/data/
-/logs/
+/data/*
+!/data/.gitkeep
+/logs/*
+!/logs/.gitkeep
 *.sqlite3-wal
 *.sqlite3-shm
 

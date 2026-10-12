@@ -4,6 +4,30 @@ Discord bot for class timetable updates, exam periods, room changes and GIF bloc
 
 ## Setup and run
 
+### Running with Docker & Docker Compose (Recommended for VPS)
+
+1. Clone or copy the project files to your VPS.
+2. Copy `.env.example` to `.env` and fill in your Discord credentials and settings:
+   ```bash
+   cp .env.example .env
+   nano .env
+   ```
+3. Start the bot and the auto-updater:
+   ```bash
+   docker compose up -d
+   ```
+
+#### Auto-update on push to GitHub
+A GitHub Actions workflow automatically builds the Docker image and publishes it to GitHub Container Registry whenever you push to `main`.
+The included `watchtower` container continuously checks for image updates and restarts the bot automatically with no downtime or manual commands needed on the VPS.
+
+To view live bot logs:
+```bash
+docker compose logs -f bot
+```
+
+### Running directly with Python
+
 Python 3.11 or newer. Run these commands in the project folder using PowerShell:
 
 ```powershell
