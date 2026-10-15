@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY ministry_bot/ ministry_bot/
+COPY settings.toml settings.example.toml ./
 
 # Ensure data and logs directories exist
 RUN mkdir -p /app/data /app/logs

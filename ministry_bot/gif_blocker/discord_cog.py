@@ -8,7 +8,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from ..core.config import read_env_id_list
 from .gif_detector import get_gif_block_reason
 from ..shared.discord_ui import GIF_REASON_LABELS, permission_status, styled_embed
 
@@ -22,7 +21,7 @@ class GifModeration(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.settings = bot.settings
-        self.exempt_channel_ids = read_env_id_list("GIF_EXEMPT_CHANNEL_IDS")
+        self.exempt_channel_ids = self.settings.gif_exempt_channel_ids
         self.removed_count = 0
         self.log_failures = 0
         self._in_flight: set[int] = set()
@@ -189,43 +188,7 @@ class GifModeration(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        await self.block_gif_message(message)
-
-    @commands.Cog.listener()
-    async def on_raw_message_edit(self, payload: discord.RawMessageUpdateEvent):
-        if not self._is_enabled_in_guild(payload.guild_id):
-            return
-        if payload.channel_id in self.exempt_channel_ids:
-            return
-        if payload.message_id in self._removed or payload.message_id in self._in_flight:
-            return
-        if not {"content", "attachments", "embeds", "message_snapshots"}.intersection(payload.data):
-            return
-        if payload.data.get("author", {}).get("bot") or payload.data.get("webhook_id"):
-            return
-        try:
-            channel = self.bot.get_channel(payload.channel_id)
-            if channel is None:
-                channel = await self.bot.fetch_channel(payload.channel_id)
-            if await self._is_channel_exempt(channel) is not False:
-                return
-            fetch_message = getattr(channel, "fetch_message", None)
-            if fetch_message is None:
-                return
-            # Fetch the complete current message, including edits outside the cache.
-            message = await fetch_message(payload.message_id)
-        except discord.NotFound:
-            return
-        except discord.Forbidden:
-            logger.warning(
-                "Cannot inspect edited message %s in channel %s. "
-                "Grant View Channel and Read Message History and check channel overrides.",
-                payload.message_id, payload.channel_id,
-            )
-            return
-        except discord.HTTPException:
-            logger.exception("Edited message %s could not be inspected.", payload.message_id)
-            return
+        """Moderate new messages only; never recheck edits or embed updates."""
         await self.block_gif_message(message)
 
     @gifs.command(name="status", description="Δες την κατάσταση του φίλτρου GIF και τα δικαιώματα καναλιών.")
@@ -238,6 +201,7 @@ class GifModeration(commands.Cog):
             "**Κατάσταση:** " + ("🟢 Ενεργό" if enabled else "⚪ Ανενεργό (`GIF_BLOCK_ENABLED=false`)"),
             "Το φίλτρο καλύπτει τα προσβάσιμα κανάλια του διακομιστή, εκτός από τις εξαιρέσεις και τα νήματά τους.",
             "Λειτουργεί όσο το bot είναι ενεργό, ανεξάρτητα από το ωράριο ελέγχου προγραμμάτων.",
+            "Ελέγχει μόνο νέα μηνύματα. Δεν επανελέγχει παλιότερα μηνύματα ή επεξεργασίες.",
             f"**Διαγραφές από την εκκίνηση:** {self.removed_count}",
             f"**Εξαιρέσεις χρηστών/ρόλων:** {len(self.settings.gif_exempt_ids)}",
             f"**Εξαιρέσεις καναλιών/κατηγοριών:** {len(self.exempt_channel_ids)}",
@@ -282,7 +246,6 @@ class GifModeration(commands.Cog):
             for name, granted in (
                 ("view_channel", permissions.view_channel),
                 ("manage_messages", permissions.manage_messages),
-                ("read_message_history", permissions.read_message_history),
             ):
                 parts.append(permission_status(name, granted))
         embed = styled_embed("🧹 Κατάσταση φίλτρου GIF", "\n".join(parts), colour=discord.Colour.orange())

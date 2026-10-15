@@ -14,6 +14,5 @@ data/
 logs/
 .idea/
 .vscode/
-tests/
 assets/
 README.md
