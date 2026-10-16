@@ -1,9 +1,10 @@
-"""General Discord commands, including the connection latency check."""
+"""General Discord commands for connection latency and the running version."""
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from .. import __version__
 from ..shared.discord_ui import styled_embed
 
 
@@ -18,6 +19,15 @@ class General(commands.Cog):
             "🏓 Το bot είναι ενεργό",
             f"**Χρόνος απόκρισης:** `{self.bot.latency * 1000:.0f} ms`",
             colour=discord.Colour.green(),
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="version", description="Δες την έκδοση του bot που τρέχει αυτή τη στιγμή.")
+    @app_commands.guild_only()
+    async def version(self, interaction: discord.Interaction):
+        embed = styled_embed(
+            "🏷️ Έκδοση bot",
+            f"**Έκδοση:** `{__version__}`",
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
