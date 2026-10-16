@@ -77,6 +77,7 @@ mentionable or allow the bot to mention all roles in the alert channel.
 | `/gifs status` | Show GIF filtering and permissions. |
 | `/notifications status` | Show your notification subscription. |
 | `/notifications setup` | Create or restore the subscription message. |
+| `/version` | Privately displays the version of the bot currently running on the server. |
 
 Manual checks, schedule preview, GIF status and notification setup require **Manage Server**.
 
