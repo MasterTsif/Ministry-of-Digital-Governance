@@ -1,10 +1,8 @@
 services:
   bot:
     container_name: ministry-bot
-    build:
-      context: .
-      dockerfile: Dockerfile
     image: ghcr.io/mastertsif/ministry-of-digital-governance:latest
+    pull_policy: always
     restart: unless-stopped
     env_file:
       - path: .env
