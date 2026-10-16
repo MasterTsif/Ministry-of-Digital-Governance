@@ -18,7 +18,7 @@ EVENING_INTERVAL_MINUTES = 15
 
 # Exam monitoring; omitted exam alert IDs inherit the class timetable IDs.
 # An empty exam role/user ID disables that mention instead of inheriting it.
-EXAMS_ENABLED = false
+EXAMS_ENABLED = true
 EXAMS_PAGE_URL = "https://www.iee.ihu.gr/exams-program/"
 # EXAMS_ALERT_CHANNEL_ID = ""
 # EXAMS_ALERT_ROLE_ID = ""
